@@ -1677,6 +1677,25 @@ Verify `/healthcheck` reports two P and sixteen D endpoints and inspect the prox
 
 P explicitly selects `ASCEND_LOCAL_COMM_RES` version 1.3 in the measured image. Verify the actual transport engine on both roles when changing images; an environment variable alone is not proof of matching engines. The historical `VLLM_PREFIX_CACHE_RETENTION_INTERVAL` environment variable was not read by that image and is omitted here. Check the resolved `--prefix-cache-retention-interval` before changing retention; zero does not disable all prefix reuse. D stays in graph mode for target and draft. Recheck dispatch capacity, KV residency and throughput together when adjusting budgets; a low KV usage gauge does not exclude other memory or compute bottlenecks.
 
+##### 1M Context Variant
+
+A 1M-token context needs its own pair of launch scripts; it is not the ordinary-length commands with one flag changed. The settings below are the validated 1M values for this 2P2D topology. Every other option and environment variable stays as in the Prefill/Decode commands above.
+
+| Role | Option | 1M value |
+|---|---|---|
+| Prefill | `--max-model-len` | `1048576` |
+| Prefill | `--max-num-batched-tokens` | `8192` |
+| Prefill | `--gpu-memory-utilization` | `0.95` |
+| Prefill | `VLLM_PREFIX_CACHE_RETENTION_INTERVAL` | `4096` |
+| Decode | `--max-model-len` | `1048576` |
+| Decode | `--max-num-batched-tokens` | `720` |
+| Decode | `--max-num-seqs` | `42` |
+| Decode | `--speculative-config` `num_speculative_tokens` | `5` |
+
+`--max-model-len` must be raised on **both** roles. A request that exceeds either side's limit is rejected by that side, so changing only Prefill or only Decode leaves the deployment unable to serve 1M prompts even though it starts successfully.
+
+On Prefill, `--max-num-batched-tokens` cannot go above `8192` once the context is 1M. At `16384` the Prefill KV pool shrinks to `7.13 GiB`, which cannot hold the `131,072` tokens per card that one 1M sequence needs under `PCP8`, and engine initialization fails; at `32768` the activation alone needs `24 GiB` while only `13.42 GiB` remains free, so the allocation fails with an out-of-memory error. Keep `8192` and leave the remaining HBM to the KV pool.
+
 #### 5.2.6 A2 KV Pooling: Mooncake SSD Profile and Memcache Integration
 
 Pooling adds `AscendStoreConnector` to the Hybrid P-to-D transport through `MultiConnector`. A PC90 or third-level-pooling scenario name does not select a backend or prove that SSD offload is active. Select and prepare one backend, then copy its complete P/D scripts below. They use P token budget8192, P/D prefix caching enabled and D draft1/mns128/GMU0.97.
